@@ -1,74 +1,96 @@
 #include <MFRC522.h>
-#include <MFRC522Extended.h>
-#include <deprecated.h>
-#include <require_cpp11.h>
-
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-#define RST_PIN         9          // Пин сброса для модуля MFRC522, настраиваемый
-#define SS_PIN          10         // Пин выбора устройства для модуля MFRC522, настраиваемый
+#define RST_PIN         9   // Пин сброса для модуля MFRC522, настраиваемый
+#define SS_PIN          10  // Пин выбора устройства для модуля MFRC522, настраиваемый
 
-#define SCK_PIN 5                    // Пин SPI Clock для модуля Ethernet
-#define SO_PIN 4                     // Пин SPI MISO (Master In Slave Out) для модуля Ethernet
-#define SI_PIN 3                     // Пин SPI MOSI (Master Out Slave In) для модуля Ethernet
-#define CS_PIN 2                     // Пин выбора устройства для модуля Ethernet
-#define RST_ETHRNT_PIN 6             // Пин сброса для модуля Ethernet, используйте доступный порт для RST
+MFRC522 rfid(SS_PIN, RST_PIN);   // Создаем экземпляр модуля RFID MFRC522
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // Создаем экземпляр модуля LCD через I2C
 
-MFRC522 rfid(SS_PIN, RST_PIN);      // Создаем экземпляр модуля RFID MFRC522
-LiquidCrystal_I2C lcd(0x27,16,2);   // Создаем экземпляр модуля LCD через I2C
+struct Key {
+  String uid;  // Уникальный идентификатор карты
+  String name; // Имя пользователя
+};
 
-void loading(){
-  lcd.init();                        // Инициализируем LCD
-  lcd.backlight();                   // Включаем подсветку LCD
+Key allowedKeys[] = {
+  {"1b512f5f", "Azizov"},  // Разрешенные карты с их уникальными идентификаторами и именами пользователей
+  {"64d747b", "Lorgar"}
+};
+
+void loading() {
+  lcd.init();
+  lcd.backlight();
   delay(1000);
-  lcd.setCursor(0,0);
-  lcd.print("Slava Ukraini!");      // Выводим сообщение на LCD
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 0);
+  lcd.print("Slava Ukraini!");   // Начальные сообщения на LCD
+  lcd.setCursor(0, 1);
   lcd.print("Heroiam slava!");
   delay(2000);
-  lcd.clear();                       // Очищаем экран LCD
-  lcd.setCursor(0,0);
+  lcd.clear();
+  lcd.setCursor(0, 0);
   lcd.print("Slava Nacii");
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 1);
   lcd.print("Smert` vrogam");
   delay(2000);
   lcd.clear();
 }
 
 void setup() {
-  loading();                         // Вызываем функцию loading для отображения начальных сообщений на LCD
-  Serial.begin(9600);                // Инициализируем последовательную связь с ПК
-  SPI.begin();                       // Инициализируем шину SPI
-  rfid.PCD_Init();                   // Инициализируем модуль RFID
-  delay(4);                          // Дополнительная задержка после инициализации
-  rfid.PCD_DumpVersionToSerial();    // Выводим детали модуля RFID в последовательный монитор
+  loading();
+  Serial.begin(9600);
+  SPI.begin();
+  rfid.PCD_Init();   // Инициализация модуля RFID
+  delay(4);
+  rfid.PCD_DumpVersionToSerial();
   Serial.println(F("Сканируйте карту для просмотра UID, SAK, типа и блоков данных..."));
 }
 
 void loop() {
   if (!rfid.PICC_IsNewCardPresent()) {
-    return;                          // Если новая карта не обнаружена, выходим из цикла
+    return;   // Если новая карта не обнаружена, выходим из цикла
   }
 
   if (!rfid.PICC_ReadCardSerial()) {
-    return;                          // Если чтение карты не удалось, выходим из цикла
+    return;   // Если чтение карты не удалось, выходим из цикла
   }
 
   lcd.setCursor(0, 0);
-  lcd.print("Card UID:");
 
   String uid = "";
   for (byte i = 0; i < rfid.uid.size; i++) {
-    uid += String(rfid.uid.uidByte[i], HEX);  // Преобразуем байты UID в шестнадцатеричный формат и добавляем к строке uid
+    uid += String(rfid.uid.uidByte[i], HEX);   // Преобразуем байты UID в шестнадцатеричный формат и добавляем к строке uid
   }
 
   lcd.setCursor(0, 1);
-  lcd.print(uid);                    // Выводим UID на LCD
+  lcd.print(uid);
+
+  // Проверка доступа
+  int keyIndex = isAccessAllowed(uid);
+  if (keyIndex != -1) {
+    lcd.setCursor(0, 0);
+    lcd.print("Access allowed");
+    lcd.setCursor(0, 1);
+    lcd.print("User: " + allowedKeys[keyIndex].name);
+  } else {
+    lcd.setCursor(0, 0);
+    lcd.print("Access denied!");
+    lcd.setCursor(0, 1);
+    lcd.print("Unknown user");
+  }
 
   delay(3000);
+  lcd.clear();
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
+}
 
-  lcd.clear();                       // Очищаем экран LCD
-  rfid.PICC_HaltA();                 // Прекращаем взаимодействие с картой RFID
-  rfid.PCD_StopCrypto1();            // Останавливаем шифрование на модуле RFID
+// Функция для поиска индекса ключа в массиве allowedKeys
+int isAccessAllowed(String uid) {
+  for (int i = 0; i < sizeof(allowedKeys) / sizeof(allowedKeys[0]); i++) {
+    if (uid.equals(allowedKeys[i].uid)) {
+      return i; // Возвращаем индекс ключа, если найден
+    }
+  }
+  return -1;    // Возвращаем -1, если ключ не найден
 }
